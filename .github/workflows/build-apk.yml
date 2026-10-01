@@ -15,80 +15,152 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================================================
+      # 1. CHECKOUT
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # =========================================================
+      # 2. JAVA 17
+      # =========================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # =========================================================
+      # 3. ANDROID SDK
+      # =========================================================
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools"
 
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          yes | sdkmanager --licenses || true
-
+      # =========================================================
+      # 4. INSTALL ANDROID PLATFORM + BUILD TOOLS
+      # =========================================================
       - name: Install Android SDK packages
         shell: bash
         run: |
+          set -e
+
+          echo "Installing Android SDK packages..."
+
           sdkmanager \
-            "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
+          echo ""
+          echo "Android SDK packages installed."
+
+          echo ""
+          echo "Installed platforms:"
+          sdkmanager --list_installed | grep "platforms;android-35" || true
+
+          echo ""
+          echo "Installed build tools:"
+          sdkmanager --list_installed | grep "build-tools;35.0.0" || true
+
+      # =========================================================
+      # 5. GRADLE 8.9
+      # =========================================================
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      # =========================================================
+      # 6. FIND NUR & SALIIM SOURCE ZIP
+      # =========================================================
       - name: Find source ZIP
         id: find_zip
         shell: bash
         run: |
           set -e
 
+          echo "Mencari source ZIP Nur & Saliim AI Chat..."
+
+          # Prioritas utama: source ZIP v1.1
           ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
             -maxdepth 1 \
             -type f \
-            -name "*.zip" \
+            -name "Nur-Saliim-AI-Chat-v1.1*.zip" \
             | head -n 1)
 
+          # Jika v1.1 tidak ditemukan, cari ZIP Nur & Saliim lainnya
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Source ZIP tidak ditemukan."
+            ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
+              -maxdepth 1 \
+              -type f \
+              -name "Nur-Saliim-AI-Chat*.zip" \
+              | sort -r \
+              | head -n 1)
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo ""
+            echo "ERROR: Source ZIP Nur & Saliim AI Chat tidak ditemukan."
+            echo ""
+            echo "ZIP yang tersedia:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.zip" \
+              -print
             exit 1
           fi
 
-          echo "Source ZIP:"
+          echo ""
+          echo "======================================"
+          echo "SOURCE ZIP YANG DIPAKAI"
+          echo "======================================"
           echo "$ZIP_FILE"
+          echo "======================================"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
+      # =========================================================
+      # 7. EXTRACT PROJECT
+      # =========================================================
       - name: Extract Android project
         shell: bash
         run: |
           set -e
 
+          echo "Membersihkan folder extracted..."
+
           rm -rf "$GITHUB_WORKSPACE/extracted"
 
           mkdir -p "$GITHUB_WORKSPACE/extracted"
 
+          echo ""
+          echo "Extracting:"
+          echo "$ZIP_FILE"
+
           unzip -q "$ZIP_FILE" \
             -d "$GITHUB_WORKSPACE/extracted"
 
-          echo "Isi hasil ekstraksi:"
-          find "$GITHUB_WORKSPACE/extracted" \
-            -maxdepth 3 \
-            -type f \
-            | head -100
+          echo ""
+          echo "Extract selesai."
 
+          echo ""
+          echo "Struktur hasil extract:"
+          find "$GITHUB_WORKSPACE/extracted" \
+            -maxdepth 4 \
+            -type f \
+            | head -150
+
+      # =========================================================
+      # 8. LOCATE ANDROID PROJECT
+      # =========================================================
       - name: Locate Android project
         shell: bash
         run: |
           set -e
+
+          echo "Mencari settings.gradle..."
 
           SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/extracted" \
             -type f \
@@ -100,11 +172,13 @@ jobs:
             | head -n 1)
 
           if [ -z "$SETTINGS_FILE" ]; then
+            echo ""
             echo "ERROR: settings.gradle(.kts) tidak ditemukan."
 
+            echo ""
             echo "Struktur extracted:"
             find "$GITHUB_WORKSPACE/extracted" \
-              -maxdepth 5 \
+              -maxdepth 6 \
               -type f
 
             exit 1
@@ -112,28 +186,76 @@ jobs:
 
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
 
-          echo "Android project ditemukan:"
+          echo ""
+          echo "======================================"
+          echo "ANDROID PROJECT DITEMUKAN"
+          echo "======================================"
           echo "$PROJECT_DIR"
+          echo "======================================"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+      # =========================================================
+      # 9. VERIFY PROJECT
+      # =========================================================
       - name: Verify Android project
         shell: bash
         run: |
           set -e
 
-          echo "Project:"
+          echo "======================================"
+          echo "VERIFY ANDROID PROJECT"
+          echo "======================================"
+
+          echo ""
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+
+          echo ""
+          echo "Project files:"
           ls -la "$PROJECT_DIR"
 
           echo ""
-          echo "App:"
+          echo "App directory:"
           ls -la "$PROJECT_DIR/app"
 
-          test -f "$PROJECT_DIR/settings.gradle.kts" \
-            || test -f "$PROJECT_DIR/settings.gradle"
+          echo ""
+          echo "Checking settings.gradle..."
+
+          if [ -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "OK: settings.gradle.kts"
+          elif [ -f "$PROJECT_DIR/settings.gradle" ]; then
+            echo "OK: settings.gradle"
+          else
+            echo "ERROR: settings.gradle tidak ditemukan."
+            exit 1
+          fi
+
+          echo ""
+          echo "Checking app module..."
 
           test -d "$PROJECT_DIR/app"
 
+          echo "OK: app directory"
+
+          echo ""
+          echo "Checking build.gradle..."
+
+          if [ -f "$PROJECT_DIR/build.gradle.kts" ]; then
+            echo "OK: build.gradle.kts"
+          elif [ -f "$PROJECT_DIR/build.gradle" ]; then
+            echo "OK: build.gradle"
+          else
+            echo "ERROR: build.gradle tidak ditemukan."
+            exit 1
+          fi
+
+          echo ""
+          echo "Project verification BERHASIL."
+
+      # =========================================================
+      # 10. BUILD APK
+      # =========================================================
       - name: Build Debug APK
         shell: bash
         run: |
@@ -141,39 +263,67 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Gradle:"
+          echo "======================================"
+          echo "GRADLE VERSION"
+          echo "======================================"
+
           gradle --version
 
           echo ""
-          echo "Building Nur & Saliim AI Chat..."
+          echo "======================================"
+          echo "BUILD NUR & SALIIM AI CHAT"
+          echo "======================================"
 
           gradle assembleDebug \
             --no-daemon \
             --stacktrace
 
+      # =========================================================
+      # 11. VERIFY APK
+      # =========================================================
       - name: Verify APK
         shell: bash
         run: |
           set -e
 
-          echo "APK hasil build:"
+          echo "======================================"
+          echo "MENCARI APK HASIL BUILD"
+          echo "======================================"
 
           find "$PROJECT_DIR/app/build/outputs/apk" \
             -type f \
             -name "*.apk" \
             -print
 
-          test -f \
-            "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          APK_FILE="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK_FILE" ]; then
+            echo ""
+            echo "ERROR: app-debug.apk tidak ditemukan."
+
+            echo ""
+            echo "Isi folder APK:"
+            find "$PROJECT_DIR/app/build/outputs/apk" \
+              -type f \
+              -print
+
+            exit 1
+          fi
 
           echo ""
           echo "======================================"
           echo "BUILD APK BERHASIL"
           echo "======================================"
 
-          ls -lh \
-            "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          ls -lh "$APK_FILE"
 
+          echo ""
+          echo "APK:"
+          echo "$APK_FILE"
+
+      # =========================================================
+      # 12. UPLOAD APK KE GITHUB ACTIONS
+      # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -181,3 +331,22 @@ jobs:
           path: "**/app/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
           retention-days: 30
+
+      # =========================================================
+      # 13. BUILD SUMMARY
+      # =========================================================
+      - name: Build Summary
+        shell: bash
+        run: |
+          echo "======================================"
+          echo "NUR & SALIIM AI CHAT"
+          echo "ANDROID APK BUILD"
+          echo "======================================"
+          echo ""
+          echo "STATUS: SUCCESS"
+          echo ""
+          echo "APK berhasil dibuat."
+          echo "Artifact: Nur-Saliim-AI-Chat-APK"
+          echo ""
+          echo "Silakan download APK dari bagian Artifacts."
+          echo "======================================"
