@@ -11,46 +11,12 @@ permissions:
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Prepare Android project
-        shell: bash
-        run: |
-          set -e
-
-          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP source tidak ditemukan."
-            exit 1
-          fi
-
-          echo "Source ZIP: $ZIP_FILE"
-
-          rm -rf extracted
-          mkdir -p extracted
-          unzip -q "$ZIP_FILE" -d extracted
-
-          SETTINGS_FILE=$(find extracted -type f \
-            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-            | head -n 1)
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "settings.gradle(.kts) tidak ditemukan."
-            find extracted -maxdepth 5 -type f
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Project Android ditemukan:"
-          ls -la "$PROJECT_DIR"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -61,15 +27,112 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Accept Android SDK licenses
+        shell: bash
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           yes | sdkmanager --licenses || true
 
-      - name: Setup Gradle
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
+      - name: Find source ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.zip" \
+            | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Source ZIP tidak ditemukan."
+            exit 1
+          fi
+
+          echo "Source ZIP:"
+          echo "$ZIP_FILE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf "$GITHUB_WORKSPACE/extracted"
+
+          mkdir -p "$GITHUB_WORKSPACE/extracted"
+
+          unzip -q "$ZIP_FILE" \
+            -d "$GITHUB_WORKSPACE/extracted"
+
+          echo "Isi hasil ekstraksi:"
+          find "$GITHUB_WORKSPACE/extracted" \
+            -maxdepth 3 \
+            -type f \
+            | head -100
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/extracted" \
+            -type f \
+            \( \
+              -name "settings.gradle.kts" \
+              -o \
+              -name "settings.gradle" \
+            \) \
+            | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle(.kts) tidak ditemukan."
+
+            echo "Struktur extracted:"
+            find "$GITHUB_WORKSPACE/extracted" \
+              -maxdepth 5 \
+              -type f
+
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Android project ditemukan:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Verify Android project
+        shell: bash
+        run: |
+          set -e
+
+          echo "Project:"
+          ls -la "$PROJECT_DIR"
+
+          echo ""
+          echo "App:"
+          ls -la "$PROJECT_DIR/app"
+
+          test -f "$PROJECT_DIR/settings.gradle.kts" \
+            || test -f "$PROJECT_DIR/settings.gradle"
+
+          test -d "$PROJECT_DIR/app"
 
       - name: Build Debug APK
         shell: bash
@@ -78,26 +141,43 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Gradle version:"
+          echo "Gradle:"
           gradle --version
 
+          echo ""
           echo "Building Nur & Saliim AI Chat..."
 
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug \
+            --no-daemon \
+            --stacktrace
 
-      - name: Find APK
+      - name: Verify APK
         shell: bash
         run: |
-          echo "APK yang dihasilkan:"
+          set -e
+
+          echo "APK hasil build:"
+
           find "$PROJECT_DIR/app/build/outputs/apk" \
             -type f \
             -name "*.apk" \
             -print
 
+          test -f \
+            "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          echo ""
+          echo "======================================"
+          echo "BUILD APK BERHASIL"
+          echo "======================================"
+
+          ls -lh \
+            "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Nur-Saliim-AI-Chat-APK
-          path: |
-            **/app/build/outputs/apk/debug/*.apk
+          path: "**/app/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
+          retention-days: 30
